@@ -7,9 +7,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -96,11 +97,12 @@ private fun KorvaiScreen(database: KorvaiDb, secrets: SecureSession) {
         (nadaiFilter.isBlank() || r.nadai.contains(nadaiFilter, true)) &&
         (search.isBlank() || listOf(r.key, r.tag, r.notes, r.talam, r.nadai, r.kaalam, r.mathirai).any { it.contains(search, true) })
     }
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(16.dp)) {
         Text("🥁 KorvaiHub", style = MaterialTheme.typography.headlineMedium)
         Text("Personal library · Local classifications · S3 audio", style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
         if (session == null) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Text("Connect AWS S3", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(bucket, { bucket = it }, label = { Text("S3 bucket") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(region, { region = it }, label = { Text("AWS region") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -126,7 +128,8 @@ private fun KorvaiScreen(database: KorvaiDb, secrets: SecureSession) {
                     busy = false
                 }
             }, enabled = !busy) { Text(if (busy) "Testing…" else "Test connection & save") }
-            Text("Use a dedicated IAM key limited to ListBucket and GetObject on this bucket. Do not use an administrator key.", style = MaterialTheme.typography.bodySmall)
+            Text("Use a dedicated IAM key limited to ListBucket, GetObject, and PutObject for uploads/* in this bucket. Do not use an administrator key.", style = MaterialTheme.typography.bodySmall)
+            }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(enabled = !busy, onClick = {
@@ -162,12 +165,12 @@ private fun KorvaiScreen(database: KorvaiDb, secrets: SecureSession) {
             Checkbox(favoritesOnly, { favoritesOnly = it }); Text("Favorites only")
             Spacer(Modifier.weight(1f)); Text("${filtered.size}/${rows.size}")
         }
-        if (selected != null) {
-            KorvaiEditor(selected!!, onBack = { selected = null }, onSave = { changed ->
+        selected?.let { editing ->
+            KorvaiEditor(editing, onBack = { selected = null }, onSave = { changed ->
                 scope.launch { dao.update(changed); selected = null; message = "Classification saved on phone" }
             })
-        } else {
-            LazyColumn(modifier = Modifier.weight(1f)) {
+        }
+        LazyColumn(modifier = Modifier.weight(1f)) {
                 items(filtered, key = { it.key }) { row ->
                     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                         Column(Modifier.padding(12.dp)) {
@@ -186,7 +189,6 @@ private fun KorvaiScreen(database: KorvaiDb, secrets: SecureSession) {
                         }
                     }
                 }
-            }
         }
         if (playing != null) {
             val url = playing!!
@@ -204,27 +206,28 @@ private fun KorvaiScreen(database: KorvaiDb, secrets: SecureSession) {
 @Composable
 private fun KorvaiEditor(row: Korvai, onBack: () -> Unit, onSave: (Korvai) -> Unit) {
     var item by remember(row.key) { mutableStateOf(row) }
-    Text("Edit classification", style = MaterialTheme.typography.titleMedium)
-    Column(Modifier.fillMaxWidth().heightIn(max = 370.dp)) {
-        LazyColumn {
-            item { Text("S3: ${row.key}", style = MaterialTheme.typography.bodySmall) }
-            item { Field("Tag", item.tag) { item = item.copy(tag = it) } }
-            item { Field("Talam", item.talam) { item = item.copy(talam = it) } }
-            item { Field("Kaalam", item.kaalam) { item = item.copy(kaalam = it) } }
-            item { Field("Nadai", item.nadai) { item = item.copy(nadai = it) } }
-            item { Field("Edam", item.edam) { item = item.copy(edam = it) } }
-            item { Field("Akshara", item.akshara) { item = item.copy(akshara = it) } }
-            item { Field("Mathirai", item.mathirai) { item = item.copy(mathirai = it) } }
-            item { Field("Purvanga mathirai", item.purvangaMathirai) { item = item.copy(purvangaMathirai = it) } }
-            item { Field("Madhyanga mathirai", item.madhyangaMathirai) { item = item.copy(madhyangaMathirai = it) } }
-            item { Field("Utaranga mathirai", item.utarangaMathirai) { item = item.copy(utarangaMathirai = it) } }
-            item { Field("Notes", item.notes) { item = item.copy(notes = it) } }
-        }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(onClick = { onSave(item) }) { Text("Save") }
-        OutlinedButton(onClick = onBack) { Text("Cancel") }
-    }
+    AlertDialog(
+        onDismissRequest = onBack,
+        title = { Text("Edit classification") },
+        text = {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 370.dp)) {
+                item { Text("S3: ${row.key}", style = MaterialTheme.typography.bodySmall) }
+                item { Field("Tag", item.tag) { item = item.copy(tag = it) } }
+                item { Field("Talam", item.talam) { item = item.copy(talam = it) } }
+                item { Field("Kaalam", item.kaalam) { item = item.copy(kaalam = it) } }
+                item { Field("Nadai", item.nadai) { item = item.copy(nadai = it) } }
+                item { Field("Edam", item.edam) { item = item.copy(edam = it) } }
+                item { Field("Akshara", item.akshara) { item = item.copy(akshara = it) } }
+                item { Field("Mathirai", item.mathirai) { item = item.copy(mathirai = it) } }
+                item { Field("Purvanga mathirai", item.purvangaMathirai) { item = item.copy(purvangaMathirai = it) } }
+                item { Field("Madhyanga mathirai", item.madhyangaMathirai) { item = item.copy(madhyangaMathirai = it) } }
+                item { Field("Uttaranga mathirai", item.utarangaMathirai) { item = item.copy(utarangaMathirai = it) } }
+                item { Field("Notes", item.notes) { item = item.copy(notes = it) } }
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(item) }) { Text("Save") } },
+        dismissButton = { OutlinedButton(onClick = onBack) { Text("Cancel") } }
+    )
 }
 @Composable private fun Field(label: String, value: String, change: (String) -> Unit) {
     OutlinedTextField(value, change, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), singleLine = true)

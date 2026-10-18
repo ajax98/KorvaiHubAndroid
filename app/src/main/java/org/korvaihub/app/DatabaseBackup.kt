@@ -13,12 +13,22 @@ object DatabaseBackup {
     suspend fun export(context: Context, db: KorvaiDb, destination: Uri): Int = withContext(Dispatchers.IO) {
         val snapshot = File.createTempFile("korvaihub-export-", ".sqlite", context.cacheDir)
         try {
-            // VACUUM INTO creates a standalone, consistent database even if Room uses WAL.
-            db.openHelper.writableDatabase.execSQL("VACUUM INTO '${snapshot.absolutePath.replace("'", "''")}'")
+            // Logical snapshot works on Android 8+, whose SQLite lacks VACUUM INTO.
+            val rows = db.withTransaction { db.dao().snapshot() }
+            SQLiteDatabase.openOrCreateDatabase(snapshot, null).use { backup ->
+                backup.execSQL("CREATE TABLE korvais (`key` TEXT PRIMARY KEY NOT NULL, talam TEXT NOT NULL, kaalam TEXT NOT NULL, nadai TEXT NOT NULL, edam TEXT NOT NULL, akshara TEXT NOT NULL, mathirai TEXT NOT NULL, purvangaMathirai TEXT NOT NULL, madhyangaMathirai TEXT NOT NULL, utarangaMathirai TEXT NOT NULL, tag TEXT NOT NULL, notes TEXT NOT NULL, favorite INTEGER NOT NULL)")
+                backup.beginTransaction()
+                try {
+                    rows.forEach { row ->
+                        backup.execSQL("INSERT INTO korvais VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", arrayOf(row.key, row.talam, row.kaalam, row.nadai, row.edam, row.akshara, row.mathirai, row.purvangaMathirai, row.madhyangaMathirai, row.utarangaMathirai, row.tag, row.notes, if (row.favorite) 1 else 0))
+                    }
+                    backup.setTransactionSuccessful()
+                } finally { backup.endTransaction() }
+            }
             context.contentResolver.openOutputStream(destination)?.use { output ->
                 snapshot.inputStream().use { it.copyTo(output) }
             } ?: error("Unable to open backup destination")
-            1
+            rows.size
         } finally { snapshot.delete() }
     }
 

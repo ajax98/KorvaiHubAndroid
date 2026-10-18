@@ -4,10 +4,16 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -16,12 +22,29 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Set up Gradle
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install Android SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+      - name: Set up Gradle and validate wrapper
         uses: gradle/actions/setup-gradle@v4
       - name: Build debug APK
-        run: bash ./gradlew :app:assembleDebug
+        run: ./gradlew clean :app:assembleDebug --stacktrace
+      - name: Unit tests and Android lint
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug --stacktrace
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: KorvaiHub-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Upload check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KorvaiHub-check-reports
+          path: app/build/reports/
+          if-no-files-found: ignore
