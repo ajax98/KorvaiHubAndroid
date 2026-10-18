@@ -1,75 +1,105 @@
-# KorvaiHub Android (native Kotlin / Jetpack Compose)
+# KorvaiHub Android
 
-**Source-code prototype, not a tested APK.** No hosted application or database is required. Your existing S3 bucket still incurs normal S3 charges.
+Native Kotlin / Jetpack Compose app for a personal mridangam korvai library.
+Audio stays in your existing private S3 bucket (`korvaibucket` by default).
+Classifications stay in Room/SQLite on the phone. No application server,
+MongoDB, or external app hosting is used.
 
-## Features in this first build
-- Native Android Compose list, text search, talam/nadai filters, favorites, classification editor
-- Local Room/SQLite database; S3 sync inserts new keys without overwriting edited metadata
-- Handles original KorvaiHub UUID object names without extensions
-- S3 listing and 15-minute audio playback URLs using AWS Signature V4
-- Audio player via Android Media3; Android Keystore-encrypted IAM credentials
-- No keys embedded in source or APK; private S3 bucket; one-time setup on device
-- **Upload audio** from Android file picker to S3 (up to 50 MB), then edit classification
+## Features
 
-## Build
-1. Install Android Studio (JDK 17), open this folder, and let Gradle sync.
-2. Build > Build APK(s). The resulting debug APK can be installed on your Android device with USB debugging or a local file transfer. **This environment has not built or device-tested the APK.**
-3. The app defaults to bucket `korvaibucket`, region `us-west-2` as an **editable placeholder**. Enter your bucket's actual AWS region.
+- List and stream S3 recordings, including original UUID keys without extensions.
+- Edit talam, nadai, kaalam, edam, akshara, mathirai, purvanga, madhyanga,
+  uttaranga, tags, notes, and favorites. Search and filter the local library.
+- Sync discovers new recordings without replacing existing classifications.
+- Upload an existing audio file through the Android picker, up to 50 MB.
+  Supported formats: mp3, wav, m4a, aac, ogg, flac, aif, aiff.
+- Uploads use random `uploads/<uuid>.<extension>` keys and `If-None-Match: *`
+  so an existing object cannot be overwritten. The app never deletes S3 objects.
+- Export a consistent SQLite metadata snapshot using the Android file picker.
+  Restore merges by S3 key, replaces matching classifications, and retains rows
+  absent from the backup. Invalid backups leave current classifications intact.
+- User-provided credentials are encrypted with Android Keystore AES-GCM.
+  Credentials and recordings are excluded from metadata exports; application
+  backup is disabled.
 
-## One-time IAM key setup (no hosting)
-1. In AWS IAM, use a **dedicated** IAM user/key restricted to `s3:ListBucket` on `arn:aws:s3:::korvaibucket` and `s3:GetObject` and `s3:PutObject` on `arn:aws:s3:::korvaibucket/*`. Avoid admin or broad keys. Confirm any bucket policy and KMS permissions separately.
-2. On Android, enter bucket, region, Access Key ID, and Secret Access Key in the setup screen. **Do not paste keys into ChatGPT, a Git repository, or a screenshot.**
-3. Tap **Test connection & save**. The app lists S3 objects to verify access before encrypting the credentials and bucket settings locally with Android Keystore AES-GCM.
-4. Tap **Sync S3**, then play recordings and edit metadata. Next launches reuse saved credentials. **Disconnect** erases saved credentials but not the local classifications.
+## Build and checks
 
-### Security limitations
-- This is a convenience/security tradeoff: a long-lived key on a phone can be abused if the phone or app is compromised. Keystore protects data at rest, not a compromised running process. Rotate/revoke the IAM key if exposed or the phone is lost.
-- The app uploads new S3 objects when requested; it does not delete or overwrite existing recordings. Restrict PutObject to the `uploads/*` prefix where possible. Keep the bucket private and AWS permissions least-privileged.
-- The key is entered into a password-masked field and is not compiled into the APK. Android application backup is disabled.
-- Test connection currently checks `ListBucket`, not object read permission; verify playback separately.
-- Region must match the bucket region; objects encrypted with SSE-KMS may need `kms:Decrypt`.
+Use JDK 17, Android SDK platform 35 and build-tools 34.0.0. The committed Gradle
+8.10.2 wrapper includes a distribution checksum. AGP is 8.7.3; Kotlin, its Compose
+compiler plugin, and KAPT are 2.0.21; Room is 2.6.1. JVM compilation targets 17.
+KAPT's language 1.9 fallback warning with Kotlin 2.0 is expected.
 
-## Data recovery and backup
-Your former MongoDB data is absent; the app creates blank classifications when discovering S3 keys. The metadata is stored in Android's app-private SQLite database. **Do not uninstall the app or clear its data without backing up the database.** This prototype does not yet include a backup/export screen. A CSV/JSON export and import is the highest-priority next feature before entering substantial new classifications.
+```sh
+./gradlew clean :app:assembleDebug
+./gradlew :app:testDebugUnitTest :app:lintDebug
+```
 
-## Known first-version limitations
-- Not yet compiled or tested against your actual S3 account or Android device.
-- Uploading existing audio files is supported; recording directly inside the app, bulk editing, backup/import, and AI search are not yet supported.
-- S3 list uses a region-specific endpoint; enter the actual bucket region. Object keys with unusual XML characters or uncommon S3 URL encodings need testing.
-- Presigned URLs expire after 15 minutes; restart playback after expiration.
-- Android build dependencies require network access in Android Studio.
+The APK is `app/build/outputs/apk/debug/app-debug.apk`. Tests use Robolectric on
+Android API 26 and 35 to exercise Room sync preservation, SQLite export/restore,
+invalid backup rejection, S3 pagination/XML decoding, upload overwrite protection,
+and presigned URL encoding. S3 tests intercept HTTP requests; no credentials or
+real bucket access are needed. These tests do not establish real-device behavior
+or live AWS authorization/playback.
 
-## Uploading recordings
-1. Ensure the IAM identity has `s3:PutObject` permission for `arn:aws:s3:::YOUR_BUCKET/uploads/*`. The existing ListBucket and GetObject permissions remain necessary.
-2. Record audio using the Android voice recorder or another recording app, then tap **Upload audio** in KorvaiHub.
-3. Select an audio file. Supported extensions: mp3, wav, m4a, aac, ogg, flac, aif, aiff; limit 50 MB.
-4. On success, KorvaiHub opens the classification editor. Add the tala, nadai, and other fields, then save locally.
-5. The recording is stored under a random `uploads/<uuid>.<extension>` key, so existing objects are not overwritten. Metadata is currently stored **only on this device**, not in S3.
+## Build and download on GitHub
 
-The upload uses an AWS Signature V4 presigned PUT URL generated locally with your saved IAM key, then sends the audio directly over HTTPS. There is no application server. The app does not require broad S3 write permissions.
+The workflow `.github/workflows/android-apk.yml` runs on pushes to `main`, pull
+requests targeting `main`, and manual dispatch. It installs JDK 17 and the Android
+SDK, validates the wrapper, performs a clean debug build, runs tests and lint,
+and uploads the APK only after all checks succeed.
 
-## Backup and restore (v0.4)
+1. Open the repository's **Actions** tab and select **Build KorvaiHub Android APK**.
+2. Open a successful run. For a manual build, use **Run workflow** on `main`
+   after this change is merged.
+3. Under **Artifacts**, download **KorvaiHub-debug-apk** (GitHub sign-in required).
+4. Extract the ZIP to obtain `app-debug.apk`.
+5. Transfer it to your Android 8.0+ phone, open the APK in your file manager,
+   allow installation from that source if prompted, and tap **Install**.
 
-The **Backup SQLite** button uses Android's file picker to save a consistent SQLite
-snapshot (`korvaihub-backup.sqlite`) anywhere your Android device supports, such
-as Downloads or a connected cloud drive. It does **not** contain AWS credentials
-or audio. The **Restore SQLite** button selects that snapshot and imports all
-korvai classifications by S3 object key. Matching entries are overwritten by the
-backup, while entries absent from the backup remain. A failed validation leaves
-the current database unchanged. Back up your current classifications before
-restoring an older snapshot. Keep backups somewhere other than the phone to
-protect against device loss.
+Debug APKs are signed automatically for personal testing. A fresh CI runner can
+use a different debug signing key, so later builds may require uninstalling the
+previous app. **Export and retain your SQLite backup before uninstalling or
+clearing app data.** Signing keys are never committed. A stable release signing
+identity is a separate setup.
 
-Audio is still uploaded to and streamed from the configured S3 bucket. Backing up
-SQLite does not back up S3 recordings. Keep S3 versioning or separate S3 backups
-if you need protection from accidental loss of audio.
+## Connect to S3 on the phone
 
-## Build on GitHub without Android Studio
+1. Enter the bucket and its actual region; `us-west-2` is an editable default.
+2. Enter a dedicated IAM access key and secret key on the phone. Never put them
+   in source, Actions secrets, logs, screenshots, or this chat.
+3. Tap **Test connection & save**, then **Sync S3**. The connection test checks
+   listing permission; test playback and upload separately on the device.
+4. Select **Play**, **Edit**, or the favorite star for a recording. Use **Upload
+   audio** to select a recording made with your preferred recording app.
+5. **Disconnect** removes stored credentials while retaining local metadata.
 
-1. Create a **private** GitHub repository, e.g. `KorvaiHubAndroid`.
-2. Upload the **contents** of this `KorvaiHubAndroid` folder to the repository root (so `.github/workflows/android-apk.yml` and `app/` are at the top level). GitHub's web upload may not preserve hidden folders reliably; use Git on your Mac for the `.github` directory if necessary.
-3. On GitHub, select **Actions → Build KorvaiHub Android APK → Run workflow** (choose `main`). Alternatively, a push to `main` triggers a build.
-4. When the run finishes successfully, open its page and download the **KorvaiHub-debug-apk** artifact. Unzip the artifact to obtain `app-debug.apk`.
-5. Transfer `app-debug.apk` to Android and open it to install. Android may ask you to allow installation from your browser or file manager. Only install an APK from your own trusted build.
+Use this least-privilege policy for the existing bucket:
 
-This workflow uses JDK 17, Gradle 8.10.2, Android SDK 35 and uploads the debug APK. **It has not been run or verified to compile in this environment.** If it fails, open the failed workflow step and copy its error log for diagnosis. No AWS keys belong in GitHub or the APK; enter restricted IAM credentials only on the phone after installation. Debug APKs are for personal testing, not Play Store distribution. For updates, keep the same application ID and signing key; GitHub's default debug signing key may change between builds, so a later debug APK may require uninstalling the prior app, which can erase local SQLite data. **Back up classifications before uninstalling or replacing the app.**
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::korvaibucket"},
+    {"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::korvaibucket/*"},
+    {"Effect":"Allow","Action":"s3:PutObject","Resource":"arn:aws:s3:::korvaibucket/uploads/*"}
+  ]
+}
+```
+
+Do not grant DeleteObject. Keep the bucket private. A bucket policy can also
+require conditional writes for the uploads prefix. SSE-KMS encrypted objects may
+require separately scoped KMS permissions. Keystore protects credentials at rest;
+rotate/revoke the dedicated key if the phone is compromised or lost.
+
+## Backup and limitations
+
+**Backup SQLite** saves metadata through Android's file picker and works on the
+minimum supported Android 8. **Restore SQLite** imports a selected backup. Keep a
+copy off the phone and back up current classifications before restoring older
+metadata. Neither operation backs up or modifies audio in S3. Existing MongoDB
+classifications are not imported automatically.
+
+Playback URLs expire after 15 minutes; restart playback to refresh them. The app
+supports uploading existing recordings rather than recording inside the app.
+Real AWS connectivity and physical-device audio playback require a device with
+your bucket credentials and have not been verified by automated mock tests.

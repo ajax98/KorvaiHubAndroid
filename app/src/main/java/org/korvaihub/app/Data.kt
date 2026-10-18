@@ -14,6 +14,7 @@ data class Korvai(
     val favorite: Boolean = false
 )
 @Dao interface KorvaiDao {
+    @Query("SELECT * FROM korvais ORDER BY key") suspend fun snapshot(): List<Korvai>
     @Query("SELECT * FROM korvais ORDER BY key") fun observe(): Flow<List<Korvai>>
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertNew(rows: List<Korvai>)
     @Update suspend fun update(row: Korvai)

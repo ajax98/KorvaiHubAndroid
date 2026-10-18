@@ -14,9 +14,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
-import org.w3c.dom.Element
-import java.io.ByteArrayInputStream
-import java.net.URI
 import java.net.URLEncoder
 import java.security.KeyStore
 import java.text.SimpleDateFormat
@@ -29,9 +26,8 @@ import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import javax.xml.parsers.DocumentBuilderFactory
 
-// A dedicated, read-only IAM key may be stored locally; never ship keys in the APK.
+// A dedicated, least-privilege IAM key may be stored locally; never ship keys in the APK.
 data class Session(val access: String, val secret: String, val token: String = "", val expiration: String = "") {
     companion object {
         fun parse(raw: String): Session {
@@ -62,17 +58,17 @@ class SecureSession(private val context: Context) {
         cipher.init(Cipher.ENCRYPT_MODE, key())
         prefs.edit().putString("data", Base64.encodeToString(cipher.iv + cipher.doFinal(payload.toByteArray()), Base64.NO_WRAP)).commit()
     }
-    fun loadConfig(): Triple<Session, String, String>? = try {
+    fun loadConfig(): Triple<Session, String, String>? { return try {
         val data = Base64.decode(prefs.getString("data", null) ?: return null, Base64.NO_WRAP)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data.copyOfRange(0, 12)))
         val j = JSONObject(String(cipher.doFinal(data.copyOfRange(12, data.size)), Charsets.UTF_8))
         Triple(Session.parse(j.getJSONObject("credentials").toString()), j.getString("bucket"), j.getString("region"))
     } catch (_: Exception) { null }
+    }
     fun clear() { prefs.edit().clear().commit() }
 }
-class S3Client(private val bucket: String, private val region: String, private val session: Session) {
-    private val http = OkHttpClient()
+class S3Client(private val bucket: String, private val region: String, private val session: Session, private val http: OkHttpClient = OkHttpClient()) {
     private val host = "s3.$region.amazonaws.com"
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20").replace("%7E", "~").replace("*", "%2A")
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -133,7 +129,7 @@ class S3Client(private val bucket: String, private val region: String, private v
         // A random object key prevents overwriting an existing recording.
         val key = "uploads/${UUID.randomUUID()}.$extension"
         val url = signedUrl(key, emptyMap(), 900, method = "PUT")
-        val request = Request.Builder().url(url).put(bytes.toRequestBody(mime.toMediaType())).build()
+        val request = Request.Builder().url(url).header("If-None-Match", "*").put(bytes.toRequestBody(mime.toMediaType())).build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) error("Upload failed (HTTP ${response.code}): ${response.body?.string()?.take(250)}")
         }
@@ -148,20 +144,24 @@ class S3Client(private val bucket: String, private val region: String, private v
             val request = Request.Builder().url(signedUrl(null, args, 60)).build()
             http.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("S3 returned HTTP ${response.code}: ${response.body?.string()?.take(350)}")
-                val factory = DocumentBuilderFactory.newInstance().apply {
-                    setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-                    setFeature("http://xml.org/sax/features/external-general-entities", false)
-                    setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+                // Android's pull parser does not resolve external entities. Do not enable DOCDECL.
+                val parser = android.util.Xml.newPullParser()
+                parser.setInput(response.body!!.charStream())
+                continuation = null
+                var event = parser.eventType
+                while (event != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                    if (event == org.xmlpull.v1.XmlPullParser.START_TAG) {
+                        when (parser.name) {
+                            "Key" -> {
+                                val k = parser.nextText()
+                                val suffix = k.substringAfterLast('/').lowercase(Locale.US)
+                                if (!k.endsWith('/') && ('.' !in suffix || listOf("mp3", "wav", "m4a", "aac", "ogg", "flac", "aif", "aiff").any { suffix.endsWith(".$it") })) keys.add(k)
+                            }
+                            "NextContinuationToken" -> continuation = parser.nextText()
+                        }
+                    }
+                    event = parser.next()
                 }
-                val doc = factory.newDocumentBuilder().parse(ByteArrayInputStream(response.body!!.bytes()))
-                val contents = doc.getElementsByTagName("Contents")
-                for (i in 0 until contents.length) {
-                    val node = contents.item(i) as Element
-                    val k = node.getElementsByTagName("Key").item(0)?.textContent ?: continue
-                    val suffix = k.substringAfterLast('/').lowercase(Locale.US)
-                    if (!k.endsWith('/') && ('.' !in suffix || listOf("mp3", "wav", "m4a", "aac", "ogg", "flac", "aif", "aiff").any { suffix.endsWith(".$it") })) keys.add(k)
-                }
-                continuation = doc.getElementsByTagName("NextContinuationToken").item(0)?.textContent
             }
         } while (!continuation.isNullOrBlank())
         keys
